@@ -1,3 +1,4 @@
+import os 
 import sys
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
@@ -15,7 +16,6 @@ class MyApp(QMainWindow):
         self.initUI()
 
 
-
     def initUI(self):
         self.statusBar()
         self.statusBar().showMessage('process manager started..')
@@ -29,15 +29,33 @@ class MyApp(QMainWindow):
 
 class OCRLayout(QWidget):
     def __init__(self, parent):
-        super().__init__(parent=parent)
+        super().__init__(parent=parent)         
+        
 
+        self.proc_dict = {}
         #widget
-        self.ocr_folder_button = QPushButton('OCR Folder Path')
-        self.ocr_folder_button.clicked.connect(self.btn_clicked_folder_button)
-        self.folder_path = ''
-        self.view_ocr_path_label = QLabel(self)
+        #self.ocr_folder_button = QPushButton('OCR Folder Path')
+        #self.ocr_folder_button.clicked.connect(self.btn_clicked_folder_button)
+        self.folder_path = os.getcwd()
+        #self.view_ocr_path_label = QLabel(self)
 
-        self.add_button = QPushButton('Add Process')
+        #self.set_config_button = QPushButton('설정')
+        #self.set_config_button.clicked.connect(self.setConfig)
+
+        #self.set_input_button = QPushButton('INPUT FOLER')
+        #self.set_input_button.clicked.connect(self.btn_clicked_folder_button)
+        #self.input_folder_path = ''
+        #self.view_input_path_label = QLabel(self)
+
+
+        #self.set_output_button = QPushButton('OUTPUT FOLER')
+        #self.set_output_button.clicked.connect(self.btn_clicked_folder_button)
+        #self.output_folder_path = ''
+        #self.view_output_path_label = QLabel(self)
+
+        
+
+        self.add_button = QPushButton('프로세스 추가')
         self.add_button.clicked.connect(self.addProcess)
 
         self.grid = QGridLayout()
@@ -68,10 +86,11 @@ class OCRLayout(QWidget):
         if self.q.qsize() != 0:
             while True:
                 data = self.q.get()
-                print(data)
+                #print(data)
                 items = self.grid.findChildren(QHBoxLayout)
                 for item in items:
-                    if(item.count() == 5):
+                    #print(item.count())
+                    if(item.count() == 4):                    
                         for column in range(item.count()):
                             it = item.itemAt(column)
                             if it is not None:
@@ -81,20 +100,31 @@ class OCRLayout(QWidget):
                 if self.q.qsize() == 0:
                     break
 
-
     def initWidget(self):
 
-        hlayout_ocr_folder_path = QHBoxLayout(self)
-
-        self.view_ocr_path_label.setText(':')
-        #ocr_folder_button = QPushButton('Open')
-        hlayout_ocr_folder_path.addWidget(self.ocr_folder_button, alignment=Qt.AlignLeft)
+        '''
+        hlayout_ocr_folder_path = QHBoxLayout()
+        self.view_ocr_path_label.setText(self.folder_path)            
+        hlayout_ocr_folder_path.addWidget(self.ocr_folder_button, alignment=Qt.AlignLeft)        
         hlayout_ocr_folder_path.addWidget(self.view_ocr_path_label, alignment=Qt.AlignLeft)
 
-        vlayout = QVBoxLayout(self)
-        vlayout.addLayout(hlayout_ocr_folder_path)
-        #vlayout.addStretch()
+        hlayout_input_folder_path = QHBoxLayout()
+        self.view_input_path_label.setText('-')           
+        hlayout_input_folder_path.addWidget(self.set_input_button, alignment=Qt.AlignLeft)        
+        hlayout_input_folder_path.addWidget(self.view_input_path_label, alignment=Qt.AlignLeft)
 
+        hlayout_output_folder_path = QHBoxLayout()
+        self.view_output_path_label.setText('-')           
+        hlayout_output_folder_path.addWidget(self.set_output_button, alignment=Qt.AlignLeft)        
+        hlayout_output_folder_path.addWidget(self.view_output_path_label, alignment=Qt.AlignLeft)
+        '''
+        
+
+        vlayout = QVBoxLayout()        
+        #vlayout.addLayout(hlayout_ocr_folder_path)
+        #vlayout.addLayout(hlayout_input_folder_path)
+        #vlayout.addLayout(hlayout_output_folder_path)
+        #vlayout.addStretch()
         #vlayout.addWidget(label, alignment=Qt.AlignTop)
         vlayout.addWidget(self.add_button, alignment=Qt.AlignTop)
 
@@ -107,29 +137,29 @@ class OCRLayout(QWidget):
     def addProcess(self):
         global count
 
-        sub_process = QHBoxLayout(self)
+        sub_process = QHBoxLayout()
 
         label = QLabel(str(count),self)
 
-        b_configFile = QPushButton('set Config', self)
-        b_configFile.setObjectName(str(count))
-        b_configFile.clicked.connect(self.setConfig)
+        #b_configFile = QPushButton('set Config', self)
+        #b_configFile.setObjectName(str(count))
+        #b_configFile.clicked.connect(self.setConfig)
 
-        b_start = QPushButton('Process Start',self)
+        b_start = QPushButton('시작',self)
         b_start.setObjectName(str(count))
         b_start.clicked.connect(self.startButton)
 
-        b_stop = QPushButton('Process Stop', self)
+        b_stop = QPushButton('중지', self)
         b_stop.setObjectName(str(count))
         b_stop.clicked.connect(self.stopButton)
 
-        status = QLineEdit('', self)
+        status = QLineEdit('Ready', self)
         status.setMinimumWidth(550)
         status.setMinimumHeight(10)
         status.setObjectName(str(count))
 
         sub_process.addWidget(label, alignment=Qt.AlignLeft)
-        sub_process.addWidget(b_configFile, alignment=Qt.AlignLeft)
+        #sub_process.addWidget(b_configFile, alignment=Qt.AlignLeft)
         sub_process.addWidget(b_start, alignment=Qt.AlignLeft)
         sub_process.addWidget(b_stop, alignment=Qt.AlignLeft)
         sub_process.addWidget(status, alignment=Qt.AlignLeft)
@@ -143,11 +173,13 @@ class OCRLayout(QWidget):
         #folder_path = self.view_ocr_path_label.Text()
         print(self.folder_path)
         if self.folder_path != '':
-            exe_path = (self.folder_path+'\\ocrProcess_new.exe')
+            exe_path = (self.folder_path+'\\moonocr_proc\\moonocr_proc.exe')
             p = subprocess.Popen(exe_path, stdout=subprocess.PIPE, shell=True)
             #ctypes.windll.shell32.ShellExecuteEx(0,'open',exe_path,None,None,1)
-        print('start'+sender.objectName())
+        print('Start a procss...PID: '+sender.objectName())
         self.server.setSubprocessId(sender.objectName())
+        self.proc_dict[sender.objectName()] = p.pid
+
 
     def stopButton(self):
         sender = self.sender()
@@ -155,11 +187,12 @@ class OCRLayout(QWidget):
         for host in hosts:
             if sender.objectName() == str(host[2]):
                 #address = host[:2]
-                print ('quit', host[0], host[1])
+                print ('Quit', host[0], host[1], host[2])
                 self.server.setSubprocessId(sender.objectName())
-                self.server.sendMessage('quit', host[0], host[1])
+                self.server.sendMessage('Quit', host[0], host[1])
+
         #self.server.mysocket
-        print('stop'+sender.objectName())
+        print('Stop process..'+sender.objectName())
 
     def setConfig(self):
         sender = self.sender()
@@ -197,7 +230,7 @@ class Thread_test():
         self.mysocket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2048)
 
         self.mysocket.bind((HOST, PORT))
-        self.hosts = []
+        self.hosts = []        
         self.host_duplicate=[]
 
         #self.interval = interval
@@ -225,7 +258,7 @@ class Thread_test():
 
     def run(self, q):
         while True:
-            print ("Listening...\n")
+            #print ("Listening...\n")
             packet, address = self.mysocket.recvfrom(1024)
             address2 = address + tuple(self.subprocess_id)
             duplicate = (address[1], int(self.subprocess_id))
@@ -235,14 +268,16 @@ class Thread_test():
                 # for host in self.hosts:
                 #     if host[1] != address2[1]:
                 self.hosts.append(address2)
-                self.list_port.append(address2[1])
-            # elif self.hosts.count(address2)
+                self.list_port.append(address2[1])                
 
-            print("connect hosts :", self.hosts)
-            print("Packet received")
-            print("from : %s, port : %s"%(address2[0], address2[1]))
-            print("length :", len(packet))
-            print("content:", packet)
+            # elif self.hosts.count(address2)
+            #print("Connected sub-prosesses :", self.list_subprocess)            
+            #print("Connected PID :", self.subprocess_id)
+            #print("connect hosts :", self.hosts)
+            #print("Packet received")
+            #print("from : %s, port : %s"%(address2[0], address2[1]))
+            #print("length :", len(packet))
+            #print("content:", packet)
 
             recv_data = pickle.loads(packet)
             if recv_data == "quit":
@@ -254,7 +289,7 @@ class Thread_test():
             elif recv_data == 'hi':
                 self.mysocket.sendto(str(self.subprocess_id).encode(), address)
             else:
-                print(recv_data)
+                #print(recv_data)
                 q.put(recv_data)
         self.mysocket.close()
 

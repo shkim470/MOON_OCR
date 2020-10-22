@@ -13,7 +13,12 @@ import tempfile
 import struct
 import uuid
 
+import socket
+import pickle
+import scipy.spatial.distance as distance
+
 DEBUG = False               #debug / no save, print image, output box information
+ONLY_PROCESS = True
 
 def My_imwrite(_filename, _img, params=None):
     try:
@@ -224,17 +229,57 @@ class ocrProcess():
         self.yolo_classes = []
         self.yolo_thresh = []
 
+        self.original_folder_name = ''
+        self.working_folder_name = ''
+
+
+
+        if ONLY_PROCESS == True:
+            self.HOST = "localhost"
+            self.PORT = 4000
+            #LOOP = True
+            self.ID = -1
+            self.mysocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.mysocket.sendto(pickle.dumps('hi'), (self.HOST, self.PORT))
+            self.packet, self.address = self.mysocket.recvfrom(1024)
+
+            self.ID = self.packet
+        else:
+            self.mysocket = None
+            self.ID = None
+            self.HOST = None
+            self.PORT = None
+    
+    def __del__(self):
+        if self.mysocket is not None:
+            self.mysocket.close()
+            restoreFolderName()
+            print("distruction------")
+
+    def restoreFolderName():
+        if os.path.exists(self.working_folder_name) is True and  os.path.exists(self.original_folder_name) is False:
+            os.rename(self.working_folder_name, self.original_folder_name)
+
+
+    
+    def sendMessage(self, message=None):
+        if ONLY_PROCESS == True:
+            send_data = [self.ID, message, self.HOST, self.PORT]
+            send_data = pickle.dumps(send_data)
+            if self.mysocket is not None:
+                self.mysocket.sendto(send_data, (self.HOST, self.PORT))
+
     def search(self, dirname, dir_file_list):
         #dir_file_list = []
         filenames = os.listdir(dirname)
         for filename in filenames:
             full_filename = os.path.join(dirname, filename)
             if os.path.isdir(full_filename):
-                self.search(full_filename)
+                self.search(full_filename, dir_file_list)
             else:
-                ext = os.path.splitext(full_filename)[-1]
-                if ext == '.jpg' or ext == '.png' or ext == '.jpeg':
-                    dir_file_list.append(full_filename)
+                #ext = os.path.splitext(full_filename)[-1]
+                #if ext == '.jpg' or ext == '.png' or ext == '.jpeg':
+                dir_file_list.append(full_filename)
 
 
     def printProgress(self, iteration, total, prefix='', suffix='', decimals=1, barLength=100):
@@ -243,10 +288,17 @@ class ocrProcess():
 
         percent = formatStr.format(100 * (iteration / float(t_total)))
         filledLength = int(round(barLength * iteration / float(t_total)))
-        bar = '#' * filledLength + '-' * (barLength - filledLength)
-        sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix)),
+        #bar = '#' * filledLength + '-' * (barLength - filledLength)
+        #sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix)),
         #if iteration == total-1: sys.stdout.write('\n')
-        sys.stdout.flush()
+        if ONLY_PROCESS == True:
+        #    self.sendMessage('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix))
+            self.sendMessage('\r%s %s%s %s' % (prefix, percent, '%', suffix))
+        else:
+            bar = '#' * filledLength + '-' * (barLength - filledLength)
+            sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix)),
+            if iteration == total-1: sys.stdout.write('\n')
+            sys.stdout.flush()
 
     def non_max_suppression(self, boxes, probs=None, overlapThresh=0.3):
         # if there are no boxes, return an empty list
@@ -350,7 +402,7 @@ class ocrProcess():
 
 
 #-------------------------------------------------------------------------------------
-    def ocr_page(self, _input_img, _input_h, _input_w, _x_num, _y_num, _grid_size, _grid_step, ocr_results):
+    def ocr_page(self, _input_img, _input_h, _input_w, _x_num, _y_num, _grid_size, _grid_step, ocr_results, ocr_result_list):
 
         src_img = cv2.cvtColor(_input_img, cv2.COLOR_BGR2GRAY)
         seg_cls, seg_score, seg_boxes = [],[],[]
@@ -367,8 +419,13 @@ class ocrProcess():
 
                 #inference code - detect characters
                 clsid, score, boxes = self.dict_yolo_model['SEGMENTATION'].detect(tile_img, self.yolo_thresh['SEGMENTATION'], 0.1) #conf thresh, nms thresh
+
+                
                 box_area = []
-                for index in range(len(boxes)): boxes[index][0] += x1;  boxes[index][1] += y1;   box_area.append(boxes[index][2]*boxes[index][3])
+                for index in range(len(boxes)): 
+                    boxes[index][0] += x1;  
+                    boxes[index][1] += y1;   
+                    box_area.append(boxes[index][2]*boxes[index][3])
 
                 seg_cls.extend(clsid)
                 if(len(boxes) == 1):    
@@ -376,12 +433,12 @@ class ocrProcess():
                     seg_boxes.extend(boxes)
                 elif(len(boxes) > 1):   
                     seg_score.extend(np.asarray(box_area).squeeze())
-                    seg_boxes.extend(np.asarray(boxes))                  
-                
-                np_boxes = np.array(seg_boxes)
-                np_score = np.array(seg_score)
-                nms_boxes = self.non_max_suppression(np_boxes, np_score, overlapThresh=0.5)       # check duplication and clean up
-        
+                    seg_boxes.extend(np.asarray(boxes))        
+                                
+        np_boxes = np.array(seg_boxes)
+        np_score = np.array(seg_score)
+        nms_boxes = self.non_max_suppression(np_boxes, np_score, overlapThresh=0.5)       # check duplication and clean up                                
+
         for box in nms_boxes:
             if box[3] > 4 and box[2] > 4: 
                 coord_y = box[1];   coord_yh = box[1] + box[3];     coord_x = box[0];   coord_xw = box[0] + box[2]
@@ -393,107 +450,284 @@ class ocrProcess():
                 x1 = (rectsize - cut_w) / 2;    y1 = (rectsize - cut_h) / 2;    x2 = x1 + cut_w; y2 = y1 + cut_h
 
                 charimg = np.full((rectsize, rectsize), 0, np.uint8)
-                charimg[int(y1):int(y2), int(x1):int(x2)] = cutimg       
+                charimg[int(y1):int(y2), int(x1):int(x2)] = cutimg     
+                #charimg = cv2.resize(charimg,dsize=(128, 128), interpolation=cv2.INTER_AREA)  
 
-                ret, charimg3 = cv2.threshold(charimg, 0,255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)  
+
+                ret, charimg3 = cv2.threshold(charimg, 0,255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)                
+                #ret, charimg3 = cv2.threshold(charimg, 100,255, cv2.THRESH_BINARY)                    
                 charimg3 = cv2.cvtColor(charimg3, cv2.COLOR_GRAY2BGR)  
                 character_cls3, character_score3, character_boxes3 = self.dict_yolo_model['OCR'].detect(charimg3, self.yolo_thresh['OCR'], 0.0)
 
                 char_classid = 0; char_score = 0
                 for (c, s, b) in zip(character_cls3, character_score3, character_boxes3):
-                    if c > char_score:  char_classid = c;   char_score = s
+                    if s > char_score:  
+                        char_classid = c;   
+                        char_score = s
                 
-                # recoinize with different options---------------------------------
-                if char_score < 0.7:
+                # recoinize with different options---------------------------------                
+                if char_score < 0.8:
+                    #ret, charimg1 = cv2.threshold(charimg, 100,255, cv2.THRESH_BINARY)
                     ret, charimg1 = cv2.threshold(charimg, 100,255, cv2.THRESH_BINARY)
                     charimg1 = cv2.cvtColor(charimg1, cv2.COLOR_GRAY2BGR) 
                     character_cls1, character_score1, character_boxes1 = self.dict_yolo_model['OCR'].detect(charimg1, self.yolo_thresh['OCR'], 0.0)
                     for (c, s, b) in zip(character_cls1, character_score1, character_boxes1):
-                        if c > char_score:  char_classid = c;   char_score = s     
+                        if s > char_score:  
+                            char_classid = c;   
+                            char_score = s     
+                    
+                    if char_score < 0.1:
+                        charimg2 = cv2.resize(charimg,dsize=(128, 128), interpolation=cv2.INTER_AREA)
+                        #ret, charimg2 = cv2.threshold(charimg2, 0,255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+                        ret, charimg2 = cv2.threshold(charimg2, 127,255, cv2.THRESH_BINARY)
 
-                    if char_score < 0.7:       
-                        ret, charimg2 = cv2.threshold(charimg, 150,255, cv2.THRESH_BINARY)
                         charimg2 = cv2.cvtColor(charimg2, cv2.COLOR_GRAY2BGR) 
-                        character_cls2, character_score2, character_boxes2 = self.dict_yolo_model['OCR'].detect(charimg2, self.yolo_thresh['OCR'], 0.0)
+                        character_cls2, character_score2, character_boxes2 = self.dict_yolo_model['OCR'].detect(charimg2, self.yolo_thresh['OCR'], 0.0)                        
                         for (c, s, b) in zip(character_cls2, character_score2, character_boxes2):
-                            if c > char_score:  char_classid = c;   char_score = s                           
-                #--------------------------------------------------------------------
-
+                            if s > char_score:  
+                                char_classid = c;   
+                                char_score = s   
+                                            
+                                      
+                #--------------------------------------------------------------------                
                 if(char_score == 0):
-                    char_classes = self.yolo_classes['OCR']
-                    #char_color = yolo_model.colors[0]
-                    char_label = "%s %d %d %d %d %f" % (char_classes[0], int(box[0]), int(box[1]), int(box[0]+box[2]), int(box[1]+box[3]), 0)
-                    ocr_results.append(char_label)
+                    zero_score = np.array([0.50001])
+                    zero_score = zero_score.astype(np.float32)
+                    char_classes = self.yolo_classes['OCR']                    
+                    char_label = "%s %d %d %d %d %f" % (char_classes[0], int(box[0]), int(box[1]), int(box[0]+box[2]), int(box[1]+box[3]), zero_score*100)
+                    ocr_result_tup = [char_classes[0], [[int(box[0]), int(box[1])], [int(box[0]+box[2]), int(box[1])], [int(box[0]+ box[2]), int(box[1]+box[3])], [int(box[0]), int(box[1]+box[3])]], zero_score*100]                    
+                    ocr_result_list.append(ocr_result_tup)
+                    ocr_results.append(char_label)   
 
                     if DEBUG:
                         unique_filename = "Errors/" + str(uuid.uuid4()) + ".jpg"
-                        My_imwrite(unique_filename, charimg)    
+                        My_imwrite(unique_filename, charimg1)    
                 else:
                     char_classes = self.yolo_classes['OCR']
                     #char_color = yolo_model.colors[int(char_classid) % len(yolo_model.colors)]
-                    char_label = "%s %d %d %d %d %f" % (char_classes[int(char_classid)], int(box[0]), int(box[1]), int(box[0]+box[2]), int(box[1]+box[3]), char_score*100)
-                    if DEBUG:
-                        print(char_label)
-                        cv2.rectangle(input_img, box, (0, 255, 0), 1)
-                    else:
-                        ocr_results.append(char_label)   
+                    char_label = "%s %d %d %d %d %f" % (char_classes[int(char_classid)], int(box[0]), int(box[1]), int(box[0]+box[2]), int(box[1]+box[3]), char_score*100)                    
+                    ocr_result_tup = [char_classes[int(char_classid)], [[int(box[0]), int(box[1])], [int(box[0]+box[2]), int(box[1])], [int(box[0]+ box[2]), int(box[1]+box[3])], [int(box[0]), int(box[1]+box[3])]], char_score * 100]
+
+                    ocr_result_list.append(ocr_result_tup)
+                    ocr_results.append(char_label)   
+
+                if DEBUG:
+                    print(char_label)
+                    cv2.rectangle(_input_img, box, (0, 255, 0), 1)
+
+                    
             
         
 
 #-----------------------------------------------------------------------------------------
     def proc_imagefile(self,_img_path, _folder_name):
+        #if ONLY_PROCESS == False:   
+        #    start = time.time()
         _gridNum = self.config_parser.get_grid_num()  
         _overlap_ratio = self.config_parser.get_overlap_ratio() 
         output_path = self.config_parser.get_output_path()
-        input_img = cv2.cvtColor((255 - cv2.imread(_img_path, 0)), cv2.COLOR_GRAY2BGR)
-        
-        
-        input_h, input_w = input_img.shape[:2]        
-        grid_size = int(input_w / _gridNum)
-        if(input_w > input_h):  grid_size = int(input_h / _gridNum)
 
-        overlap_size = int(grid_size*_overlap_ratio)
-        grid_step = grid_size - overlap_size
-        x_num = int((input_w / grid_step) + 1)
-        y_num = int((input_h / grid_step) + 1)
-
-        ocr_results = [] 
-        self.ocr_page(input_img, input_h, input_w, x_num, y_num, grid_size, grid_step, ocr_results)
-        
-        if DEBUG:
-            # for box in seg_boxes:                               
-            cv2.imshow('input_img', input_img)
-            cv2.waitKey(0)
-        else:
-            if not(os.path.isdir(output_path)): os.makedirs(os.path.join(output_path))
-            if not (os.path.isdir(output_path+'/'+_folder_name+'/')): os.makedirs(os.path.join(output_path+'/'+_folder_name+'/'))
+        src_img = cv2.imread(_img_path, 0)
+        if src_img is None:            
+            if not(os.path.isdir(output_path)): 
+                os.makedirs(os.path.join(output_path))
+            if not (os.path.isdir(output_path+'/'+_folder_name+'/tmp/')): 
+                os.makedirs(os.path.join(output_path+'/'+_folder_name+'/tmp/'))
             split_path = os.path.basename(_img_path)
-            shutil.move(_img_path, output_path+'/'+_folder_name+'/' + split_path)
-            #shutil.move(img_path, output_path+ '/' + split_path)
+            shutil.move(_img_path, output_path+'/'+_folder_name+'/tmp/' + split_path)
+        else:
+            src_img = 255 - src_img    
+            input_img = cv2.cvtColor(src_img, cv2.COLOR_GRAY2BGR)  
+            
+            input_h, input_w = input_img.shape[:2]        
+            grid_size = int(input_w / _gridNum)
+            if(input_w > input_h):  grid_size = int(input_h / _gridNum)
 
-            text_name = os.path.splitext(split_path)
-            f = open(output_path+'/'+_folder_name+'/'+text_name[0]+'.txt', 'w', encoding='utf-8')
-            for text in ocr_results:
-                f.writelines(text)
-                f.write('\n')
-            f.close()           
+            overlap_size = int(grid_size*_overlap_ratio)
+            grid_step = grid_size - overlap_size
+            x_num = int((input_w / grid_step) + 1)
+            y_num = int((input_h / grid_step) + 1)
+
+            ocr_result= []
+            ocr_result_list = [] 
+            self.ocr_page(input_img, input_h, input_w, x_num, y_num, grid_size, grid_step, ocr_result, ocr_result_list)
+            
+            
+            #sort ocr results
+            sorted_list, sorted_coord_list, sorted_prob_list, sorted_coord_rb_list = self.sortingBoundingBox(ocr_result_list)
+            ocr_result = []
+            
+            for labels, coords, probs, rbs in zip(sorted_list, sorted_coord_list, sorted_prob_list, sorted_coord_rb_list):
+                for i in range(1, len(labels)):
+                    first_coord = rbs[i - 1][0]
+                    next_coord = coords[i][0]
+                    box_height = abs(coords[i - 1][1] - rbs[i - 1][1])
+                    char_label = "%s %d %d %d %d %f" % (labels[i-1], coords[i-1][0], coords[i-1][1], rbs[i-1][0], rbs[i-1][1], probs[i-1])
+                    #print(char_label)
+                    #Space
+                    if abs(next_coord - first_coord) > box_height / 2.:
+                        space = "%s %d %d %d %d %f" % (' ', coords[i-1][0], coords[i-1][1], rbs[i-1][0], rbs[i-1][1], 1.0)
+                        ocr_result.append(char_label)
+                        ocr_result.append(space)
+                        #print(labels[i - 1], ' ')
+                        #print('띄어쓰기!')
+                    else:
+                        ocr_result.append(char_label)
+                        #print(labels[i - 1], ' ')
+
+                if (len(labels) != 0):
+                    char_label = "%s %d %d %d %d %f" % (labels[len(labels) - 1], coords[len(labels) - 1][0], coords[len(labels) - 1][1], rbs[len(labels) - 1][0], rbs[len(labels) - 1][1], probs[len(labels) - 1])
+                    ocr_result.append(char_label)
+                
+                enter = "%s %d %d %d %d %f" % ('/n', coords[len(labels) - 1][0], coords[len(labels) - 1][1], rbs[len(labels) - 1][0], rbs[len(labels) - 1][1], 1.0)
+                ocr_result.append(enter)
+                #print('줄바꿈') 
+            
+            
+            if DEBUG:
+                # for box in seg_boxes:                               
+                cv2.imshow('input_img', input_img)
+                cv2.waitKey(0)
+            else:
+                if not(os.path.isdir(output_path)): os.makedirs(os.path.join(output_path))
+                if not (os.path.isdir(output_path+'/'+_folder_name+'/')): os.makedirs(os.path.join(output_path+'/'+_folder_name+'/'))
+                split_path = os.path.basename(_img_path)
+                shutil.move(_img_path, output_path+'/'+_folder_name+'/' + split_path)
+                #shutil.move(img_path, output_path+ '/' + split_path)
+
+                text_name = os.path.splitext(split_path)
+                f = open(output_path+'/'+_folder_name+'/'+text_name[0]+'.txt', 'w', encoding='utf-8')
+                for text in ocr_result:
+                    f.writelines(text)
+                    f.write('\n')
+                f.close()
+
+        #if ONLY_PROCESS == False:                   
+            #end = time.time()
+            #elapsed = end - start
+            #print('  ---  Elapsed time is %f seconds.' % elapsed)
 #----------------------------------------------------------------------------------------------------
     def procssing_folder(self, _folder_name):
-        folder_path = "{}/{}/".format(self.config_parser.get_input_path(), _folder_name)
-        dir_file_list = []
-        self.search(folder_path, dir_file_list)
-        if len(dir_file_list) != 0:
-            print(' ')
-            print('start processing---{}'.format(_folder_name))
+        start = time.time()
+        self.original_folder_name = _folder_name
+        self.working_folder_name = _folder_name
 
-            for idx, img_path in enumerate(dir_file_list):
-                self.printProgress(idx+1, len(dir_file_list), 'OCR Processing: ', 'Complete', 1, 50)
-                #processing image file in the folder
-                self.proc_imagefile(img_path, _folder_name)
+
+        strflag = _folder_name[0:5]
+        folder_path = "{}/{}/".format(self.config_parser.get_input_path(), _folder_name)
+        if os.path.exists(folder_path):
+            if strflag != '_____':                
+                new_folder_path = "{}/_____{}/".format(self.config_parser.get_input_path(), _folder_name)
+                self.working_folder_name = new_folder_path
+                os.rename(folder_path, new_folder_path)
+
+                if os.path.exists(new_folder_path):
+                    dir_file_list = []            
+                    self.search(new_folder_path, dir_file_list)
+                    #dir_file_list = os.listdir(new_folder_path)
+
+                    if len(dir_file_list) != 0:
+                        print(' ')
+                        print('start processing---{}'.format(_folder_name))
+                        if ONLY_PROCESS == True and self.mysocket is not None:
+                            self.sendMessage('start processing---{}'.format(_folder_name))
+
+                        page_num = len(dir_file_list)
+                        for idx, img_path in enumerate(dir_file_list):                            
+                            while not os.path.isfile(img_path):                                
+                                pass
+                            #processing image file in the folder                            
+                            self.proc_imagefile(img_path, _folder_name)        
+
+                            end = time.time()      
+                            elapsed = '%5.2f s/file' % ((end-start)/(idx+1))
+                            self.printProgress(idx+1, page_num, 'OCR({}): '.format(_folder_name), '완료 ({}/{}) 처리속도:{}'.format((idx+1), page_num, elapsed), 1, 50)
+                
+                    #remove the folder where all files have been processed          
+                    #os.rmdir(new_folder_path)
+                    shutil.rmtree(new_folder_path, ignore_errors=True)
+        #end = time.time()
+        #elapsed = end - start
+        #print('  ---  Elapsed time is %f seconds.' % elapsed)
+
+    def sortingBoundingBox(self, points):
+
+        points = list(map(lambda x: [x[0], x[1][0], x[1][2], x[2], x[1][2]], points))
+        # print(points)
+        points_sum = list(map(lambda x: [x[0], x[1], sum([x[1][0],x[1][1]]), x[2][1], x[3], x[4]], points))
+        x_y_cordinate = list(map(lambda x: x[1], points_sum))
+        probability = list(map(lambda x: x[4], points_sum))
+        x_y_cordinate_rb = list(map(lambda x : x[5], points_sum))
+        final_sorted_list = []
+        final_coord_list = []
+        final_prob_list = []
+        final_coord_list_rb = []
+        while True:
+            try:
+                if len(points_sum) == 0:
+                    break
+                new_sorted_text = []
+                new_sorted_coord = []
+                new_sorted_prob = []
+                new_sorted_rb = []
+                initial_value_A = [i for i in sorted(enumerate(points_sum), key=lambda x: x[1][2])][0]
+                #         print(initial_value_A)
+                threshold_value = abs(initial_value_A[1][1][1] - initial_value_A[1][3])
+                threshold_value = (threshold_value / 2) + 5
+                del points_sum[initial_value_A[0]]
+                del x_y_cordinate[initial_value_A[0]]
+                del probability[initial_value_A[0]]
+                del x_y_cordinate_rb[initial_value_A[0]]
+                #         print(threshold_value)
+                A = [initial_value_A[1][1]]
+                K = list(map(lambda x: [x, abs(x[1] - initial_value_A[1][1][1])], x_y_cordinate))
+                K = [[count, i] for count, i in enumerate(K)]
+                K = [i for i in K if i[1][1] <= threshold_value]
+                sorted_K = list(map(lambda x: [x[0], x[1][0]], sorted(K, key=lambda x: x[1][1])))
+                B = []
+                points_index = []
+                for tmp_K in sorted_K:
+                    points_index.append(tmp_K[0])
+                    B.append(tmp_K[1])
+                if len(B) == 0:
+                    continue
+                dist = distance.cdist(A, B)[0]
+                d_index = [i for i in sorted(zip(dist, points_index), key=lambda x: x[0])]
+                new_sorted_text.append(initial_value_A[1][0])
+                new_sorted_coord.append(initial_value_A[1][1])
+                new_sorted_prob.append(initial_value_A[1][4])
+                new_sorted_rb.append(initial_value_A[1][5])
+
+                index = []
+                for j in d_index:
+                    new_sorted_text.append(points_sum[j[1]][0])
+                    new_sorted_coord.append(x_y_cordinate[j[1]])
+                    new_sorted_prob.append(probability[j[1]])
+                    new_sorted_rb.append(x_y_cordinate_rb[j[1]])
+                    index.append(j[1])
+                for n in sorted(index, reverse=True):
+                    del points_sum[n]
+                    del x_y_cordinate[n]
+                    del probability[n]
+                    del x_y_cordinate_rb[n]
+                final_sorted_list.append(new_sorted_text)
+                final_coord_list.append(new_sorted_coord)
+                final_prob_list.append(new_sorted_prob)
+                final_coord_list_rb.append(new_sorted_rb)
+                #print(new_sorted_text)
+            except Exception as e:
+                print(e)
+                break
+
+        return final_sorted_list, final_coord_list, final_prob_list, final_coord_list_rb
 #--------------------------------------------------------------------------------------------------------
     def main(self):
-        self.config_parser.parser()
         print('main')        
+        if ONLY_PROCESS == True:
+            self.sendMessage('Ready...')
+        
+        self.config_parser.parser()
+        
 
         model_config = self.config_parser.get_model_config()        
         wait_second = self.config_parser.get_wait_second()
@@ -507,14 +741,54 @@ class ocrProcess():
 
             if(len(model_config) == len(self.dict_yolo_model)):
                 print(f'success loaded {len(model_config)} model')
+                if ONLY_PROCESS == True:
+                    self.sendMessage(f'{len(model_config)} model(s) are loaded..')
+
                 while True:
-                    folderlist = os.listdir(self.config_parser.get_input_path())
+                    if ONLY_PROCESS == True and self.mysocket is not None:
+                        self.mysocket.settimeout(1.0)
+                        try:
+                            packet, address = self.mysocket.recvfrom(1024)
+                            if (pickle.loads(packet) == 'quit'):
+                                self.mysocket.sendto(pickle.dumps('quit'), (self.HOST, self.PORT))
+                                packet, address = self.mysocket.recvfrom(1024)
+                                if (pickle.loads(packet) == 'quit'):
+                                    break                                    
+                                   
+                        except socket.timeout:
+                            print('timeout')
+
+                        self.mysocket.settimeout(None)
+
+                    #Process Folder------------------------------------------
+                    folderlist = os.listdir(self.config_parser.get_input_path())                   
                     for folder in folderlist:
-                        self.procssing_folder(folder)                        
+                       self.procssing_folder(folder)     
+                    #---------------------------------------------------------         
+                                    
+                    
+                    if ONLY_PROCESS == True and self.mysocket is not None:
+                        self.sendMessage('Waiting...')
+                        for i in range(0, wait_second):
+                            self.mysocket.settimeout(1.0)
+                            try:
+                                packet, address = self.mysocket.recvfrom(1024)
+                                if (pickle.loads(packet) == 'quit'):
+                                    self.mysocket.sendto(pickle.dumps('quit'), (self.HOST, self.PORT))
+                                    packet, address = self.mysocket.recvfrom(1024)
+                                    if (pickle.loads(packet) == 'quit'):
+                                        self.sendMessage('Stop OCR Process')                                        
+                                        os.exit(1)
+                            except socket.timeout:
+                                print('timeout')
+
+                            self.mysocket.settimeout(None)
+                            time.sleep(1.0)
                     else:
                         print(' ')                        
-                        print('waiting...')
-                        time.sleep(wait_second)
+                        print('Waiting...') 
+                    time.sleep(wait_second)
+                    
 
 if __name__ == '__main__':
     ocr_process = ocrProcess()
